@@ -460,6 +460,55 @@ async def test_handup_prevote_yes(mock_discord_setup, setup_test_game):
         mock_safe_send_impl.assert_any_call(alice.user, "Your vote has been preset to YES.")
 
 @pytest.mark.asyncio
+async def test_handup_vote_when_active(mock_discord_setup, setup_test_game):
+    """Test @handup command when it's the player's turn to vote."""
+    game = setup_test_game['game']
+    alice = setup_test_game['players']['alice']
+    bob = setup_test_game['players']['bob']
+    charlie = setup_test_game['players']['charlie']
+
+    global_vars.game = game
+    global_vars.channel = mock_discord_setup['channels']['town_square']
+
+    await game.start_day()
+    vote = setup_test_vote(
+        game=game,
+        nominee=charlie,
+        nominator=bob,
+        voters=[alice, bob]
+    )
+    game.days[-1].votes.append(vote)
+    alice.hand_raised = False
+
+    mock_safe_send_channel = AsyncMock(spec=discord.TextChannel)
+    mock_user_vote_yes = MockMessage(id=1010, content="yes", author=alice.user, channel=mock_safe_send_channel)
+
+    with patch('bot_impl.get_player', return_value=alice), \
+         patch('bot_impl.backup') as mock_backup, \
+         patch.object(game, 'update_seating_order_message', new_callable=AsyncMock) as mock_update_seating, \
+         patch.object(vote, 'vote', wraps=vote.vote) as mock_vote_method, \
+         patch('bot_impl.safe_send', new_callable=AsyncMock) as mock_safe_send_impl, \
+         patch('bot_impl.client', mock_discord_setup['client']):
+
+        mock_safe_send_impl.return_value.channel = mock_safe_send_channel
+        mock_discord_setup['client'].wait_for = AsyncMock(return_value=mock_user_vote_yes)
+
+        msg = MockMessage(
+            id=1011,
+            author=alice.user,
+            guild=None,
+            content="@handup",
+            channel=alice.user.dm_channel,
+        )
+        await on_message(msg)
+
+        assert alice.hand_raised is True
+        mock_vote_method.assert_called_once_with(1)
+        mock_update_seating.assert_called_once()
+        assert mock_backup.call_count == 3
+        mock_safe_send_impl.assert_any_call(alice.user, "Your vote has been cast as YES.")
+
+@pytest.mark.asyncio
 async def test_handup_no_active_vote(mock_discord_setup, setup_test_game):
     """Test @handup command when there is no active vote."""
     from tests.fixtures.discord_mocks import MockMessage
