@@ -2919,39 +2919,66 @@ async def on_message(message):
 
                     if active_vote:
                         try:
-                            prevote_prompt_msg = await safe_send(message.author, "Preset vote to YES, NO, or CANCEL existing prevote? (yes/no/cancel)")
-                            prevote_choice_msg = await client.wait_for(
-                                "message",
-                                check=(lambda x: x.author == message.author and x.channel == prevote_prompt_msg.channel),
-                                timeout=200,
-                            )
-                            prevote_choice = prevote_choice_msg.content.lower()
-
-                            if prevote_choice in ["yes", "y"]:
-                                vt = 1  # Default to 'yes'
-                                banshee_ability = the_ability(player.character, Banshee)
-                                if banshee_ability and banshee_ability.is_screaming:
-                                    vt = 2
-                                await active_vote.preset_vote(player, vt)
-                                await safe_send(message.author, "Your vote has been preset to YES.")
-                                if global_vars.game is not NULL_GAME:
-                                    backup("current_game.pckl")
-                            elif prevote_choice in ["no", "n"]:
-                                await active_vote.preset_vote(player, 0)
-                                await safe_send(message.author, "Your vote has been preset to NO.")
-                                if global_vars.game is not NULL_GAME:
-                                    backup("current_game.pckl")
-                            elif prevote_choice == "cancel":
-                                await active_vote.cancel_preset(player)
-                                await safe_send(message.author, "Your preset vote has been cancelled.")
-                                if global_vars.game is not NULL_GAME:
-                                    backup("current_game.pckl")
+                            if active_vote.order[active_vote.position].user == message.author:
+                                vote_prompt_msg = await safe_send(
+                                    message.author,
+                                    "It's your turn to vote. Vote YES or NO? (yes/no)",
+                                )
+                                vote_choice_msg = await client.wait_for(
+                                    "message",
+                                    check=(lambda x: x.author == message.author and x.channel == vote_prompt_msg.channel),
+                                    timeout=200,
+                                )
+                                vote_choice = vote_choice_msg.content.lower()
+                                if vote_choice in ["yes", "y"]:
+                                    await active_vote.vote(1)
+                                    await safe_send(message.author, "Your vote has been cast as YES.")
+                                    if global_vars.game is not NULL_GAME:
+                                        backup("current_game.pckl")
+                                elif vote_choice in ["no", "n"]:
+                                    await active_vote.vote(0)
+                                    await safe_send(message.author, "Your vote has been cast as NO.")
+                                    if global_vars.game is not NULL_GAME:
+                                        backup("current_game.pckl")
+                                else:
+                                    await safe_send(message.author, "Invalid vote. Vote not entered.")
                             else:
-                                await safe_send(message.author, "Invalid prevote choice. Prevote not changed.")
+                                prevote_prompt_msg = await safe_send(
+                                    message.author,
+                                    "Preset vote to YES, NO, or CANCEL existing prevote? (yes/no/cancel)",
+                                )
+                                prevote_choice_msg = await client.wait_for(
+                                    "message",
+                                    check=(lambda x: x.author == message.author and x.channel == prevote_prompt_msg.channel),
+                                    timeout=200,
+                                )
+                                prevote_choice = prevote_choice_msg.content.lower()
+
+                                if prevote_choice in ["yes", "y"]:
+                                    vt = 1  # Default to 'yes'
+                                    banshee_ability = the_ability(player.character, Banshee)
+                                    if banshee_ability and banshee_ability.is_screaming:
+                                        vt = 2
+                                    await active_vote.preset_vote(player, vt)
+                                    await safe_send(message.author, "Your vote has been preset to YES.")
+                                    if global_vars.game is not NULL_GAME:
+                                        backup("current_game.pckl")
+                                elif prevote_choice in ["no", "n"]:
+                                    await active_vote.preset_vote(player, 0)
+                                    await safe_send(message.author, "Your vote has been preset to NO.")
+                                    if global_vars.game is not NULL_GAME:
+                                        backup("current_game.pckl")
+                                elif prevote_choice == "cancel":
+                                    await active_vote.cancel_preset(player)
+                                    await safe_send(message.author, "Your preset vote has been cancelled.")
+                                    if global_vars.game is not NULL_GAME:
+                                        backup("current_game.pckl")
+                                else:
+                                    await safe_send(message.author, "Invalid prevote choice. Prevote not changed.")
                         except asyncio.TimeoutError:
-                            await safe_send(message.author, "Timed out. Prevote not changed.")
+                            await safe_send(message.author, "Timed out. Vote not entered.")
                         except Exception as e:
-                            logger.error(f"Error during prevote prompt after handdown: {e}")
+                            logger.error(f"Error during vote prompt after handdown: {e}")
                     return
 
                 # command == "handup"
@@ -2968,39 +2995,66 @@ async def on_message(message):
 
                 if active_vote:
                     try:
-                        prevote_prompt_msg = await safe_send(message.author, "Preset vote to YES, NO, or CANCEL existing prevote? (yes/no/cancel)")
-                        prevote_choice_msg = await client.wait_for(
-                            "message",
-                            check=(lambda x: x.author == message.author and x.channel == prevote_prompt_msg.channel),
-                            timeout=200,
-                        )
-                        prevote_choice = prevote_choice_msg.content.lower()
-
-                        if prevote_choice in ["yes", "y"]:
-                            vt = 1  # Default to 'yes'
-                            banshee_ability = the_ability(player.character, Banshee)
-                            if banshee_ability and banshee_ability.is_screaming:
-                                vt = 2 # Banshee scream with hand up is a 'yes' vote of 2
-                            await active_vote.preset_vote(player, vt)
-                            await safe_send(message.author, "Your vote has been preset to YES.")
-                            if global_vars.game is not NULL_GAME:
-                                backup("current_game.pckl")
-                        elif prevote_choice in ["no", "n"]:
-                            await active_vote.preset_vote(player, 0)
-                            await safe_send(message.author, "Your vote has been preset to NO.")
-                            if global_vars.game is not NULL_GAME:
-                                backup("current_game.pckl")
-                        elif prevote_choice == "cancel":
-                            await active_vote.cancel_preset(player)
-                            await safe_send(message.author, "Your preset vote has been cancelled.")
-                            if global_vars.game is not NULL_GAME:
-                                backup("current_game.pckl")
+                        if active_vote.order[active_vote.position].user == message.author:
+                            vote_prompt_msg = await safe_send(
+                                message.author,
+                                "It's your turn to vote. Vote YES or NO? (yes/no)",
+                            )
+                            vote_choice_msg = await client.wait_for(
+                                "message",
+                                check=(lambda x: x.author == message.author and x.channel == vote_prompt_msg.channel),
+                                timeout=200,
+                            )
+                            vote_choice = vote_choice_msg.content.lower()
+                            if vote_choice in ["yes", "y"]:
+                                await active_vote.vote(1)
+                                await safe_send(message.author, "Your vote has been cast as YES.")
+                                if global_vars.game is not NULL_GAME:
+                                    backup("current_game.pckl")
+                            elif vote_choice in ["no", "n"]:
+                                await active_vote.vote(0)
+                                await safe_send(message.author, "Your vote has been cast as NO.")
+                                if global_vars.game is not NULL_GAME:
+                                    backup("current_game.pckl")
+                            else:
+                                await safe_send(message.author, "Invalid vote. Vote not entered.")
                         else:
-                            await safe_send(message.author, "Invalid prevote choice. Prevote not changed.")
+                            prevote_prompt_msg = await safe_send(
+                                message.author,
+                                "Preset vote to YES, NO, or CANCEL existing prevote? (yes/no/cancel)",
+                            )
+                            prevote_choice_msg = await client.wait_for(
+                                "message",
+                                check=(lambda x: x.author == message.author and x.channel == prevote_prompt_msg.channel),
+                                timeout=200,
+                            )
+                            prevote_choice = prevote_choice_msg.content.lower()
+
+                            if prevote_choice in ["yes", "y"]:
+                                vt = 1  # Default to 'yes'
+                                banshee_ability = the_ability(player.character, Banshee)
+                                if banshee_ability and banshee_ability.is_screaming:
+                                    vt = 2  # Banshee scream with hand up is a 'yes' vote of 2
+                                await active_vote.preset_vote(player, vt)
+                                await safe_send(message.author, "Your vote has been preset to YES.")
+                                if global_vars.game is not NULL_GAME:
+                                    backup("current_game.pckl")
+                            elif prevote_choice in ["no", "n"]:
+                                await active_vote.preset_vote(player, 0)
+                                await safe_send(message.author, "Your vote has been preset to NO.")
+                                if global_vars.game is not NULL_GAME:
+                                    backup("current_game.pckl")
+                            elif prevote_choice == "cancel":
+                                await active_vote.cancel_preset(player)
+                                await safe_send(message.author, "Your preset vote has been cancelled.")
+                                if global_vars.game is not NULL_GAME:
+                                    backup("current_game.pckl")
+                            else:
+                                await safe_send(message.author, "Invalid prevote choice. Prevote not changed.")
                     except asyncio.TimeoutError:
-                        await safe_send(message.author, "Timed out. Prevote not changed.")
+                        await safe_send(message.author, "Timed out. Vote not entered.")
                     except Exception as e:
-                        logger.error(f"Error during prevote prompt after handup: {e}")
+                        logger.error(f"Error during vote prompt after handup: {e}")
                 return
 
             # Help dialogue
