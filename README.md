@@ -14,6 +14,8 @@ A Discord bot for playing Blood on the Clocktower.
 - Comprehensive testing suite with 400+ tests
 - Multiple environment support for different servers
 
+Backups run in the background: save requests are queued and flushed at most once every 20 seconds, so expect a short delay (up to ~20s) between a command and the corresponding `current_game.pckl` write.
+
 ## Configuration
 
 The bot uses environment-specific configurations. You can either:

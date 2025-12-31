@@ -210,6 +210,59 @@ async def test_voting_sequence_with_execution(mock_discord_setup, setup_test_gam
 
 
 @pytest.mark.asyncio
+async def test_pm_command_queues_backup_request(mock_discord_setup, setup_test_game):
+    """Verify @pm queues a backup request instead of performing it immediately."""
+    global_vars.game = setup_test_game['game']
+    global_vars.channel = MagicMock()
+
+    dm_channel = MockChannel(999, "dm-alice")
+    dm_channel.guild = None
+
+    setup_test_game['game'].isDay = True
+    setup_test_game['game'].days = [MagicMock()]
+    setup_test_game['game'].days[-1].isPms = True
+
+    alice_message = MockMessage(
+        id=42,
+        content="@pm bob",
+        channel=dm_channel,
+        author=mock_discord_setup['members']['alice']
+    )
+
+    reply_message = MockMessage(
+        id=43,
+        content="hello",
+        channel=dm_channel,
+        author=mock_discord_setup['members']['alice']
+    )
+
+    wait_for_mock = AsyncMock(return_value=reply_message)
+
+    with patch('utils.game_utils.backup') as mock_backup, \
+            patch('utils.game_utils.request_backup', new_callable=AsyncMock) as mock_request_backup, \
+            patch('utils.player_utils.get_player', return_value=setup_test_game['players']['alice']), \
+            patch('utils.player_utils.select_player', return_value=setup_test_game['players']['bob']), \
+            patch('model.game.whisper_mode.choose_whisper_candidates',
+                  return_value=[setup_test_game['players']['bob']]), \
+            patch('utils.message_utils.safe_send', return_value=AsyncMock()), \
+            patch('bot_client.client.wait_for', wait_for_mock), \
+            patch('model.settings.GameSettings.load') as mock_settings_load:
+        mock_settings = MagicMock()
+        mock_settings.get_st_channel.return_value = -1
+        mock_settings_load.return_value = mock_settings
+
+        original_message_method = setup_test_game['players']['bob'].message
+        setup_test_game['players']['bob'].message = AsyncMock()
+
+        await on_message(alice_message)
+
+        mock_backup.assert_called_once_with("current_game.pckl")
+        mock_request_backup.assert_awaited_once_with("whisper message")
+
+        setup_test_game['players']['bob'].message = original_message_method
+
+
+@pytest.mark.asyncio
 async def test_player_death_and_revival(mock_discord_setup, setup_test_game):
     """Test killing and reviving a player."""
     # Create a direct message channel for storyteller

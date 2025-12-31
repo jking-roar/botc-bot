@@ -1,11 +1,21 @@
 """Utilities for game management, extracted to avoid circular imports."""
 
+import asyncio
 import os
+import time
+from typing import Optional
 
 import dill
 import discord
 
 import global_vars
+
+BACKUP_INTERVAL_SECONDS = 20
+_backup_task: Optional[asyncio.Task] = None
+_pending_event = asyncio.Event()
+_pending_requests = 0
+_last_backup_reason: Optional[str] = None
+_last_backup_time = 0.0
 
 
 async def update_presence(client):
@@ -138,3 +148,63 @@ async def load(fileName):
                 setattr(game, obj, dill.load(file))
 
     return game
+
+
+async def request_backup(reason: str):
+    """Queue a backup request and return immediately.
+
+    Args:
+        reason: Description of why the backup was requested.
+    """
+    global _pending_requests, _last_backup_reason
+    _pending_requests += 1
+    _last_backup_reason = reason
+    _pending_event.set()
+
+
+async def _periodic_backup_loop():
+    global _last_backup_time, _pending_requests, _last_backup_reason
+    try:
+        while True:
+            await _pending_event.wait()
+            now = time.monotonic()
+            wait_time = max(0, BACKUP_INTERVAL_SECONDS - (now - _last_backup_time))
+            await asyncio.sleep(wait_time)
+            if _pending_requests:
+                try:
+                    backup("current_game.pckl")
+                except Exception as exc:
+                    print(f"Error during periodic backup ({_last_backup_reason or 'unspecified'}): {exc}")
+                _last_backup_time = time.monotonic()
+                _pending_requests = 0
+                _last_backup_reason = None
+            _pending_event.clear()
+    except asyncio.CancelledError:
+        _pending_event.clear()
+        raise
+
+
+async def schedule_periodic_backup():
+    """Start the periodic backup task if it is not already running."""
+    global _backup_task
+    if _backup_task and not _backup_task.done():
+        return _backup_task
+    loop = asyncio.get_running_loop()
+    _backup_task = loop.create_task(_periodic_backup_loop())
+    return _backup_task
+
+
+async def stop_periodic_backup():
+    """Cancel the periodic backup task and clear pending requests."""
+    global _backup_task, _last_backup_time
+    if _backup_task:
+        _backup_task.cancel()
+        try:
+            await _backup_task
+        except asyncio.CancelledError:
+            pass
+        _backup_task = None
+    _pending_requests = 0
+    _last_backup_reason = None
+    _pending_event.clear()
+    _last_backup_time = 0.0

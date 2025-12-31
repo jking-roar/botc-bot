@@ -124,6 +124,7 @@ async def on_ready():
         print("No backup found.")
 
     await update_presence(bot_client.client)
+    await game_utils.schedule_periodic_backup()
 
     # Log all registered commands
     registry.log_registered_commands(bot_client.logger)
@@ -2429,7 +2430,7 @@ async def on_message(message):
 
                 await player_utils.make_active(message.author)
                 if global_vars.game is not game.NULL_GAME:
-                    game_utils.backup("current_game.pckl")
+                    await game_utils.request_backup("whisper message")
                 return
 
             # Message history
@@ -2976,3 +2977,13 @@ async def on_member_update(before, after):
             for st in global_vars.game.storytellers:
                 if st.user.id == after.id:
                     global_vars.game.storytellers.remove(st)
+
+
+@bot_client.client.event
+async def on_disconnect():
+    await game_utils.stop_periodic_backup()
+
+
+@bot_client.client.event
+async def on_resumed():
+    await game_utils.schedule_periodic_backup()

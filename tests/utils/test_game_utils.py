@@ -1,9 +1,11 @@
 """Tests for the game_utils module which provides utility functions for game management."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import utils.game_utils as game_utils
 from utils.game_utils import update_presence, remove_backup
 
 
@@ -234,3 +236,29 @@ class TestRemoveBackup:
             assert mock_remove.call_count == 2  # Main file + days obj file
             mock_remove.assert_any_call("test.pckl")
             mock_remove.assert_any_call("days_test.pckl")
+
+
+class TestPeriodicBackup:
+    @pytest.mark.asyncio
+    async def test_multiple_requests_single_backup_per_interval(self, monkeypatch):
+        """Multiple rapid requests should result in one backup within the interval."""
+        call_count = 0
+
+        def fake_backup(filename):
+            nonlocal call_count
+            call_count += 1
+            assert filename == "current_game.pckl"
+
+        monkeypatch.setattr(game_utils, "BACKUP_INTERVAL_SECONDS", 0.05)
+        monkeypatch.setattr(game_utils, "backup", fake_backup)
+
+        await game_utils.stop_periodic_backup()
+        await game_utils.schedule_periodic_backup()
+
+        await game_utils.request_backup("first request")
+        await game_utils.request_backup("second request")
+        await asyncio.sleep(0.06)
+
+        assert call_count == 1
+
+        await game_utils.stop_periodic_backup()
