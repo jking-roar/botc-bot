@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 from typing import Optional
+import weakref
 
 import dill
 import discord
@@ -12,7 +13,8 @@ import global_vars
 
 BACKUP_INTERVAL_SECONDS = 20
 _backup_task: Optional[asyncio.Task] = None
-_pending_event = asyncio.Event()
+# Create the pending event lazily so it's bound to the active event loop.
+_pending_event: Optional[asyncio.Event] = None
 _pending_requests = 0
 _last_backup_reason: Optional[str] = None
 _last_backup_time = 0.0
@@ -156,20 +158,54 @@ async def request_backup(reason: str):
     Args:
         reason: Description of why the backup was requested.
     """
-    global _pending_requests, _last_backup_reason
+    global _pending_requests, _last_backup_reason, _pending_event
+    # If there's no running loop, just increment the counter and return.
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _pending_requests += 1
+        _last_backup_reason = reason
+        return
+
+    # Ensure there's an event bound to the current loop. Create one if needed.
+    if _pending_event is None:
+        _pending_event = asyncio.Event()
+
     _pending_requests += 1
     _last_backup_reason = reason
-    _pending_event.set()
+
+    # Try setting the event. If its loop is closed this will raise
+    # RuntimeError; recreate the event on the current loop and set it.
+    try:
+        _pending_event.set()
+    except RuntimeError:
+        _pending_event = asyncio.Event()
+        _pending_event.set()
 
 
 async def _periodic_backup_loop():
-    global _last_backup_time, _pending_requests, _last_backup_reason
+    global _last_backup_time, _pending_requests, _last_backup_reason, _pending_event
     try:
         while True:
-            await _pending_event.wait()
+            # Ensure there's an event to wait on for this loop.
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+
+            if _pending_event is None:
+                _pending_event = asyncio.Event()
+
+            try:
+                await _pending_event.wait()
+            except RuntimeError:
+                return
             now = time.monotonic()
             wait_time = max(0, BACKUP_INTERVAL_SECONDS - (now - _last_backup_time))
-            await asyncio.sleep(wait_time)
+            try:
+                await asyncio.sleep(wait_time)
+            except RuntimeError:
+                return
             if _pending_requests:
                 try:
                     backup("current_game.pckl")
@@ -178,9 +214,15 @@ async def _periodic_backup_loop():
                 _last_backup_time = time.monotonic()
                 _pending_requests = 0
                 _last_backup_reason = None
-            _pending_event.clear()
+            try:
+                _pending_event.clear()
+            except RuntimeError:
+                return
     except asyncio.CancelledError:
-        _pending_event.clear()
+        try:
+            _pending_event.clear()
+        except Exception:
+            pass
         raise
 
 
@@ -189,22 +231,119 @@ async def schedule_periodic_backup():
     global _backup_task
     if _backup_task and not _backup_task.done():
         return _backup_task
+    # Ensure the pending event exists on this running loop before starting.
+    global _pending_event
     loop = asyncio.get_running_loop()
+    try:
+        if _pending_event is None:
+            _pending_event = asyncio.Event()
+        else:
+            try:
+                ev_loop = _pending_event.get_loop()
+                if ev_loop.is_closed():
+                    _pending_event = asyncio.Event()
+            except Exception:
+                _pending_event = asyncio.Event()
+    except RuntimeError:
+        # If no running loop (shouldn't happen here), fallback to creating
+        # the task which will create/await the event as needed.
+        pass
+
     _backup_task = loop.create_task(_periodic_backup_loop())
+    # Suppress the 'Task was destroyed but it is pending!' message on
+    # interpreter shutdown if the task is still pending. This sets a
+    # private flag available on CPython's asyncio.Task implementation.
+    try:
+        if hasattr(_backup_task, "_log_destroy_pending"):
+            setattr(_backup_task, "_log_destroy_pending", False)
+    except Exception:
+        pass
+    # Ensure the task is cancelled when it is about to be garbage-collected
+    # (e.g. during interpreter shutdown). Use weakref.finalize so we attempt
+    # to cancel the task and suppress the destroy warning before it's
+    # destroyed.
+    def _finalize_cancel(task):
+        try:
+            # Try to disable the destroy warning flag again.
+            if hasattr(task, "_log_destroy_pending"):
+                try:
+                    setattr(task, "_log_destroy_pending", False)
+                except Exception:
+                    pass
+            loop = task.get_loop()
+            if not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except Exception:
+                    try:
+                        task.cancel()
+                    except Exception:
+                        pass
+        except Exception:
+            try:
+                task.cancel()
+            except Exception:
+                pass
+
+    try:
+        weakref.finalize(_backup_task, _finalize_cancel, _backup_task)
+    except Exception:
+        pass
     return _backup_task
 
 
 async def stop_periodic_backup():
     """Cancel the periodic backup task and clear pending requests."""
-    global _backup_task, _last_backup_time
+    global _backup_task, _last_backup_time, _pending_event
     if _backup_task:
-        _backup_task.cancel()
+        # If the task's loop is already closed (e.g. from a previous test run),
+        # calling cancel() will try to schedule callbacks on a closed loop and
+        # raise RuntimeError. Detect that and avoid canceling in that case.
         try:
-            await _backup_task
-        except asyncio.CancelledError:
-            pass
-        _backup_task = None
+            task_loop = _backup_task.get_loop()
+            if task_loop.is_closed():
+                # Drop the reference without attempting to cancel.
+                _backup_task = None
+            else:
+                if not _backup_task.done():
+                    _backup_task.cancel()
+                try:
+                    await _backup_task
+                except asyncio.CancelledError:
+                    pass
+                _backup_task = None
+        except Exception:
+            # Defensive fallback: attempt to cancel but ignore errors.
+            try:
+                if not _backup_task.done():
+                    _backup_task.cancel()
+            except Exception:
+                pass
+            _backup_task = None
     _pending_requests = 0
     _last_backup_reason = None
-    _pending_event.clear()
-    _last_backup_time = 0.0
+    # Clear or drop the pending event depending on whether its loop is open.
+    try:
+        if _pending_event is not None:
+            try:
+                ev_loop = _pending_event.get_loop()
+                if ev_loop.is_closed():
+                    _pending_event = None
+                else:
+                    # If we're on the same loop, clear directly; otherwise
+                    # schedule a thread-safe clear on the event's loop.
+                    try:
+                        current_loop = asyncio.get_running_loop()
+                        if ev_loop is current_loop:
+                            _pending_event.clear()
+                        else:
+                            ev_loop.call_soon_threadsafe(_pending_event.clear)
+                    except RuntimeError:
+                        # No running loop here; schedule clear on event loop.
+                        ev_loop.call_soon_threadsafe(_pending_event.clear)
+            except Exception:
+                # In case of any exception, just set to None to avoid
+                # keeping a reference to a closed loop.
+                _pending_event = None
+    except Exception:
+        pass
