@@ -214,9 +214,26 @@ class NominationButtonsView(discord.ui.View):
             await interaction.response.send_message("You are not in the game.", ephemeral=True)
             return
 
-        # Send confirmation first to acknowledge the interaction
-        vote_text = "yes" if vote_value > 0 else "no"
-        await interaction.response.send_message(f"You voted **{vote_text}** for {self.nominee_name}.", ephemeral=True)
+        # Ensure it's the player's turn to vote before acknowledging
+        current_vote = global_vars.game.days[-1].votes[-1]
+        if current_vote.position >= len(current_vote.order):
+            await interaction.response.send_message("This vote has already ended.", ephemeral=True)
+            return
+
+        expected_voter = current_vote.order[current_vote.position]
+        if expected_voter.user.id != player_obj.user.id:
+            await interaction.response.send_message(
+                f"It's {expected_voter.display_name}'s turn to vote, not {player_obj.display_name}'s.",
+                ephemeral=True,
+            )
+            return
+
+        allowed, reason = current_vote._validate_vote(player_obj, vote_value)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
 
         # Disable buttons immediately to prevent double clicks
         for item in self.children:
@@ -227,10 +244,14 @@ class NominationButtonsView(discord.ui.View):
             except:
                 pass  # Ignore edit failures
 
-        # Get the current vote and place the vote
-        current_vote = global_vars.game.days[-1].votes[-1]
+        # Place the vote
         await current_vote.vote(vote_value, voter=player_obj)
 
+        vote_text = "yes" if vote_value > 0 else "no"
+        await interaction.followup.send(
+            f"You voted **{vote_text}** for {self.nominee_name}.",
+            ephemeral=True,
+        )
         bot_client.logger.info(f"{player_obj.display_name} voted {vote_text} for {self.nominee_name} via button")
 
     async def on_timeout(self):

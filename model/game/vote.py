@@ -180,6 +180,9 @@ class Vote(BaseVote):
         voudon_in_play = in_play_voudon()
         player_is_active_banshee = potential_banshee and potential_banshee.is_screaming
 
+        if vt > 0 and voudon_in_play and voter != voudon_in_play and not voter.is_ghost:
+            return False, "Voudon is in play. Only the Voudon and dead may vote."
+
         # Check dead votes
         if vt > 0 and voter.is_ghost and voter.dead_votes < 1 and not (
                 player_is_active_banshee and not potential_banshee.is_poisoned) and not voudon_in_play:
@@ -216,6 +219,9 @@ class Vote(BaseVote):
         for person in global_vars.game.seatingOrder:
             if isinstance(person.character, model.characters.VoteModifier):
                 person.character.on_vote_call(voter)
+
+        if voudon_is_active and voter != voudon_is_active and not voter.is_ghost:
+            return True
 
         # Skip ghosts without dead votes (unless they have special abilities)
         return voter.is_ghost and voter.dead_votes < 1 and not player_is_active_banshee and not voudon_is_active
