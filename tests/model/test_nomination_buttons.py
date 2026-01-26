@@ -88,6 +88,8 @@ async def test_handle_vote_calls_vote_method(mock_discord_setup, setup_test_game
     # use helper to create vote and patch its vote method
     vote = _ensure_active_vote(game, players, 'charlie', 'storyteller')
     vote.vote = AsyncMock()
+    vote.order = [players['bob']]
+    vote.position = 0
 
     bob_member = mock_discord_setup['members']['bob']
     view = _make_view(nb, "Charlie", "Storyteller", bob_member)
@@ -102,7 +104,8 @@ async def test_handle_vote_calls_vote_method(mock_discord_setup, setup_test_game
 
     await view._handle_vote(interaction, 1)
 
-    interaction.response.send_message.assert_awaited()
+    interaction.response.defer.assert_awaited()
+    interaction.followup.send.assert_awaited()
     vote.vote.assert_awaited_with(1, voter=players['bob'])
 
 
@@ -314,6 +317,9 @@ def _make_interaction(member):
     interaction.user = member
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
     return interaction
 
 

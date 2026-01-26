@@ -546,6 +546,28 @@ async def test_delete(mock_discord_setup, setup_test_game):
 
 
 @pytest.mark.asyncio
+async def test_voudon_skips_living_non_voudon_voters(setup_test_game):
+    """Ensure Voudon blocks living non-Voudon voters and allows dead voters."""
+    alice = setup_test_game['players']['alice']
+    bob = setup_test_game['players']['bob']
+    charlie = setup_test_game['players']['charlie']
+
+    vote = Vote(nominee=alice, nominator=bob)
+
+    charlie.is_ghost = True
+    charlie.dead_votes = 0
+
+    with patch('model.game.vote.in_play_voudon', return_value=alice):
+        assert vote._should_skip_voter(bob) is True
+        assert vote._should_skip_voter(alice) is False
+        assert vote._should_skip_voter(charlie) is False
+
+        allowed, reason = vote._validate_vote(bob, 1)
+        assert allowed is False
+        assert "Voudon is in play" in reason
+
+
+@pytest.mark.asyncio
 async def test_vote_calculation_with_modifiers(mock_discord_setup, setup_test_game):
     """Test vote calculation with VoteBeginningModifier characters."""
     # Set up players
@@ -1520,4 +1542,3 @@ async def test_traveler_vote_allows_dead_player_yes_vote_without_dead_vote(mock_
 
         # Verify the position advanced
         assert vote.position == 2, f"Expected position 2, got {vote.position}"
-
